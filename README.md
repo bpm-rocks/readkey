@@ -18,6 +18,8 @@ Run `bpm install` to add the library. Finally, use it in your scripts.
     . bpm
     bpm::include readkey
 
+A special note is that this library does not use the [`assign`] library. Because of this design choice, you should not use variables that start with `__readkey__*` in code that uses this library. It was done in order to boost the speed. When reading characters from the terminal, having a really fast response time is important, especially when obtaining escape sequences. This is not a preferred practice; using [`assign`] is far safer.
+
 
 API
 ===
@@ -87,3 +89,5 @@ License
 =======
 
 This project is placed under an [MIT License](LICENSE.md).
+
+[`assign`]: https://github.com/bpm-rocks/assign
