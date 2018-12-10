@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+#
+# If you want to see the complex tokens, pass any argument as the first parameter.
+#
+# Examples
+#
+#   ./read-loop    # Shows simple tokens
+#   ./read-loop x  # Shows the complex tokens
+
+cd "${0%/*}"
+
+keepReading() {
+    # Infinite loop - keep reading characters
+    while true; do
+        # shellcheck disable=SC1091
+        . ../libreadkey # Source the file again to get any changes
+
+        # Make sure we assign a value to x
+        x="not set"
+
+        # Read a single code
+        readkey::code x "$1" || return $?
+
+        # Write the output as hex
+        echo -n "$x" | od -A x -t x1z -v
+    done
+}
+
+if [[ -z "${1-}" ]]; then
+    echo "Showing simple tokens."
+else
+    echo "Showing complex tokens. Try holding shift and control when you use arrow keys."
+fi
+
+echo "Press ^C (Control-C) to exit."
+echo ""
+
+# Hide keyboard output. readkey::char does this automatically, but it doesn't
+# work real well when you rapidly smash the keyboard.
+sttyRestore=$(stty -g)
+stty -echo
+
+# Read characters
+keepReading ${@+"$@"} || :
+
+# Restore the echo of the characters to the console.
+stty "$sttyRestore"

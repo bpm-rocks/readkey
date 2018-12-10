@@ -1,0 +1,353 @@
+#!/usr/bin/env bash
+# Based off key sequences found at the following sources:
+# http://www.cs.columbia.edu/~ricardo/misc/Eterm_reference.html
+# http://www.cs.ucsb.edu/~mikec/cs32/misc/demos/libs/rogue5.4.4/mdport.c
+
+if [[ ${BASH_VERSINFO[0]} == 3 ]]; then
+    # Reads a single character into the variable specified as $1
+    readkey::char() {
+        local __readkey__char__char
+        IFS='' read -s -r -n 1 __readkey__char__char || return $?
+        __readkey__char__char=${__readkey__char__char:=$'\n'}
+        printf -v "$1" %s "$__readkey__char__char"
+    }
+
+    # Reads a single character into the variable specified as $1
+    # This should exit quickly. It's to detect if there's another
+    # key in the buffer.
+    # Decimal timeouts are not supported
+    readkey::fast() {
+        local __readkey__fast__char
+        IFS='' read -s -r -n 1 -t 1 __readkey__fast__char || return $?
+        __readkey__fast__char=${__readkey__fast__char:=$'\n'}
+        printf -v "$1" %s "$__readkey__fast__char"
+    }
+else
+    # Reads a single character into the variable specified as $1
+    readkey::char() {
+        read -s -r -N 1 "$1"
+    }
+
+    # Reads a single character into the variable specified as $1
+    # This should exit quickly. It's to detect if there's another
+    # key in the buffer.
+    # 0.01 seconds works down to 1200 cps
+    readkey::fast() {
+        read -s -r -N 1 -t 0.01 "$1"
+    }
+fi
+
+readkey::sequence() {
+    local __readkey__sequence__keepGoing __readkey__sequence__more __readkey__sequence__result
+
+    readkey::char __readkey__sequence__result
+
+    if [[ "$__readkey__sequence__result" == $'\x1b' ]]; then
+        if readkey::fast __readkey__sequence__more; then
+            if [[ "$__readkey__sequence__more" == $'\x1b' ]]; then
+                # Capture double-escape sequences
+                __readkey__sequence__result+=$__readkey__sequence__more
+                readkey::fast __readkey__sequence__more
+            fi
+
+            __readkey__sequence__result+=$__readkey__sequence__more
+
+            case $__readkey__sequence__more in
+                O|'['|$'\x1bO'|$'\x1b[')
+                    # Keep reading until we hit a non-number
+                    __readkey__sequence__keepGoing=true
+
+                    while $__readkey__sequence__keepGoing; do
+                        if readkey::fast __readkey__sequence__more; then 
+                            __readkey__sequence__result+=$__readkey__sequence__more
+
+                            case $__readkey__sequence__more in
+                                0|1|2|3|4|5|6|7|8|9|';')
+                                    ;;
+                                *)
+                                    __readkey__sequence__keepGoing=false
+                            esac
+                        else
+                            __readkey__sequence__keepGoing=false
+                        fi
+                    done
+            esac
+        fi
+    fi
+
+    printf -v "$1" %s "$__readkey__sequence__result"
+}
+
+
+# Read a key code or escape sequence.
+#
+# $1 - Destination variable that will hold the single character
+#      or the token.
+# $2 - When set to a non-empty value, this gets the more complex
+#      code. When not, the tokens are simplified.
+#
+# Reads a key code from the terminal. If it is an escape sequence,
+# the whole sequence is read and the character is replaced with
+# a token that's easier to use (think "ESC" instead of $'\x1b').
+# Unknown escape sequences are replaced with an UNKNOWN token.
+# When there are key modifiers, such as "shift", they are added
+# to the token, alphabetically, after a plus. For instance, there's
+# ARROW_UP+CONTROL+SHIFT.
+#
+# When the codes are simplified, the modifiers are removed and
+# information about the source (keypad or not) is also redacted.
+# Some tokens are replaced with the character they represent.
+#
+# | Complex Code           | Simple Code |
+# |------------------------|-------------|
+# | ARROW_UP+SHIFT         | ARROW_UP    |
+# | F1+APPLICATION         | F1          |
+# | KEYPAD_ENTER           | ENTER       |
+# | KEYPAD_ADD+APPLICATION | +           |
+#
+# Exits successfully when one or more characters were read.
+readkey::code() {
+    local __readkey__code__result
+
+    readkey::sequence __readkey__code__result
+
+    case $__readkey__code__result in
+        # Cursor keys
+        $'\x1b[A') __readkey__code__result=ARROW_UP ;;
+        $'\x1b[1;2A') __readkey__code__result=ARROW_UP${2:++SHIFT} ;;
+        $'\x1b[a') __readkey__code__result=ARROW_UP${2:++SHIFT} ;;
+        $'\x1bOa') __readkey__code__result=ARROW_UP${2:++CONTROL} ;;
+        $'\x1b[1;5A') __readkey__code__result=ARROW_UP${2:++CONTROL} ;;
+        $'\x1b[1;6A') __readkey__code__result=ARROW_UP${2:++CONTROL+SHIFT} ;;
+        $'\x1bOA') __readkey__code__result=ARROW_UP${2:++APPLICATION} ;;
+        $'\x1b\x1b[A') __readkey__code__result=ARROW_UP${2:++ALT} ;;
+
+        $'\x1b[B') __readkey__code__result=ARROW_DOWN ;;
+        $'\x1b[1;2B') __readkey__code__result=ARROW_DOWN${2:++SHIFT} ;;
+        $'\x1b[b') __readkey__code__result=ARROW_DOWN${2:++SHIFT} ;;
+        $'\x1bOb') __readkey__code__result=ARROW_DOWN${2:++CONTROL} ;;
+        $'\x1b[1;5B') __readkey__code__result=ARROW_DOWN${2:++CONTROL} ;;
+        $'\x1b[1;6B') __readkey__code__result=ARROW_DOWN${2:++CONTROL+SHIFT} ;;
+        $'\x1bOB') __readkey__code__result=ARROW_DOWN${2:++APPLICATION} ;;
+        $'\x1b\x1b[B') __readkey__code__result=ARROW_DOWN${2:++ALT} ;;
+
+        $'\x1b[C') __readkey__code__result=ARROW_RIGHT ;;
+        $'\x1b[1;2C') __readkey__code__result=ARROW_RIGHT${2:++SHIFT} ;;
+        $'\x1b[c') __readkey__code__result=ARROW_RIGHT${2:++SHIFT} ;;
+        $'\x1bOc') __readkey__code__result=ARROW_RIGHT${2:++CONTROL} ;;
+        $'\x1b[1;5C') __readkey__code__result=ARROW_RIGHT${2:++CONTROL} ;;
+        $'\x1b[1;6C') __readkey__code__result=ARROW_RIGHT${2:++CONTROL+SHIFT} ;;
+        $'\x1bOC') __readkey__code__result=ARROW_RIGHT${2:++APPLICATION} ;;
+        $'\x1b\x1b[C') __readkey__code__result=ARROW_RIGHT${2:++ALT} ;;
+
+        $'\x1b[D') __readkey__code__result=ARROW_LEFT ;;
+        $'\x1b[1;2D') __readkey__code__result=ARROW_LEFT${2:++SHIFT} ;;
+        $'\x1b[d') __readkey__code__result=ARROW_LEFT${2:++SHIFT} ;;
+        $'\x1bOd') __readkey__code__result=ARROW_LEFT${2:++CONTROL} ;;
+        $'\x1b[1;5D') __readkey__code__result=ARROW_LEFT${2:++CONTROL} ;;
+        $'\x1b[1;6D') __readkey__code__result=ARROW_LEFT${2:++CONTROL+SHIFT} ;;
+        $'\x1bOD') __readkey__code__result=ARROW_LEFT${2:++APPLICATION} ;;
+        $'\x1b\x1b[D') __readkey__code__result=ARROW_LEFT${2:++ALT} ;;
+
+        # Special keys
+        $'\x1b[Z') __readkey__code__result=TAB${2:++SHIFT} ;;
+
+        $'\x1b[1~') __readkey__code__result=HOME ;;
+        $'\x1b[H') __readkey__code__result=HOME ;;
+        $'\x1b[1;5H') __readkey__code__result=HOME${2:++CONTROL} ;;
+        $'\x1b[1;6H') __readkey__code__result=HOME${2:++CONTROL+SHIFT} ;;
+        $'\x1b[1;2H') __readkey__code__result=HOME${2:++SHIFT} ;;
+        $'\x1b[1;9H') __readkey__code__result=HOME${2:++ALT} ;;
+        $'\x1b[1$') __readkey__code__result=HOME${2:++SHIFT} ;;
+        $'\x1b[1^') __readkey__code__result=HOME${2:++CONTROL} ;;
+        $'\x1b[1@') __readkey__code__result=HOME${2:++CONTROL+SHIFT} ;;
+        $'\x1b\x1b[1~') __readkey__code__result=HOME${2:++ALT} ;;
+
+        $'\x1b[2~') __readkey__code__result=INSERT ;;
+        $'\x1b[2$') __readkey__code__result=INSERT${2:++SHIFT} ;;
+        $'\x1b[2^') __readkey__code__result=INSERT${2:++CONTROL} ;;
+        $'\x1b[2@') __readkey__code__result=INSERT${2:++CONTROL+SHIFT} ;;
+        $'\x1b\x1b[2~') __readkey__code__result=INSERT${2:++ALT} ;;
+
+        $'\x1b[3~') __readkey__code__result=DELETE ;;
+        $'\x1b[3$') __readkey__code__result=DELETE${2:++SHIFT} ;;
+        $'\x1b[3^') __readkey__code__result=DELETE${2:++CONTROL} ;;
+        $'\x1b[3@') __readkey__code__result=DELETE${2:++CONTROL+SHIFT} ;;
+        $'\x1b\x1b[3~') __readkey__code__result=DELETE${2:++ALT} ;;
+
+        $'\x1b[4~') __readkey__code__result=END ;;
+        $'\x1b[F') __readkey__code__result=END ;;
+        $'\x1b[U') __readkey__code__result=END ;;
+        $'\x1b[1;5F') __readkey__code__result=END${2:++CONTROL} ;;
+        $'\x1b[1;6F') __readkey__code__result=END${2:++CONTROL+SHIFT} ;;
+        $'\x1b[1;2F') __readkey__code__result=END${2:++SHIFT} ;;
+        $'\x1b[1;9F') __readkey__code__result=END${2:++ALT} ;;
+        $'\x1b[4$') __readkey__code__result=END${2:++SHIFT} ;;
+        $'\x1b[4^') __readkey__code__result=END${2:++CONTROL} ;;
+        $'\x1b[4@') __readkey__code__result=END${2:++CONTROL+SHIFT} ;;
+        $'\x1b\x1b[4~') __readkey__code__result=END${2:++ALT} ;;
+
+        $'\x1b[S') __readkey__code__result=PAGE_UP ;;
+        $'\x1b[5~') __readkey__code__result=PAGE_UP ;;
+        $'\x1b[5$') __readkey__code__result=PAGE_UP${2:++SHIFT} ;;
+        $'\x1b[5^') __readkey__code__result=PAGE_UP${2:++CONTROL} ;;
+        $'\x1b[5@') __readkey__code__result=PAGE_UP${2:++CONTROL+SHIFT} ;;
+        $'\x1b\x1b[5~') __readkey__code__result=PAGE_UP${2:++ALT} ;;
+        
+        $'\x1b[T') __readkey__code__result=PAGE_DOWN ;;
+        $'\x1b[6~') __readkey__code__result=PAGE_DOWN ;;
+        $'\x1b[6$') __readkey__code__result=PAGE_DOWN${2:++SHIFT} ;;
+        $'\x1b[6^') __readkey__code__result=PAGE_DOWN${2:++CONTROL} ;;
+        $'\x1b[6@') __readkey__code__result=PAGE_DOWN${2:++CONTROL+SHIFT} ;;
+        $'\x1b\x1b[6~') __readkey__code__result=PAGE_DOWN${2:++ALT} ;;
+
+        # Function keys - Note: Shift-F1 through F10 sends F11-F20.
+        $'\x1b[11~') __readkey__code__result=F1 ;;
+        $'\x1b[11^') __readkey__code__result=F1${2:++CONTROL} ;;
+        $'\x1b[11;2~') __readkey__code__result=F1${2:++SHIFT} ;;
+    
+        $'\x1b[12~') __readkey__code__result=F2 ;;
+        $'\x1b[12^') __readkey__code__result=F2${2:++CONTROL} ;;
+        $'\x1b[12;2~') __readkey__code__result=F2${2:++SHIFT} ;;
+    
+        $'\x1b[13~') __readkey__code__result=F3 ;;
+        $'\x1b[13^') __readkey__code__result=F3${2:++CONTROL} ;;
+        $'\x1b[13;2~') __readkey__code__result=F3${2:++SHIFT} ;;
+    
+        $'\x1b[14~') __readkey__code__result=F4 ;;
+        $'\x1b[14^') __readkey__code__result=F4${2:++CONTROL} ;;
+        $'\x1b[14;2~') __readkey__code__result=F4${2:++SHIFT} ;;
+    
+        $'\x1b[15~') __readkey__code__result=F5 ;;
+        $'\x1b[15^') __readkey__code__result=F5${2:++CONTROL} ;;
+        $'\x1b[15;2~') __readkey__code__result=F5${2:++SHIFT} ;;
+    
+        $'\x1b[17~') __readkey__code__result=F6 ;;
+        $'\x1b[17^') __readkey__code__result=F6${2:++CONTROL} ;;
+        $'\x1b[17;2~') __readkey__code__result=F6${2:++SHIFT} ;;
+    
+        $'\x1b[18~') __readkey__code__result=F7 ;;
+        $'\x1b[18^') __readkey__code__result=F7${2:++CONTROL} ;;
+        $'\x1b[18;2~') __readkey__code__result=F7${2:++SHIFT} ;;
+    
+        $'\x1b[19~') __readkey__code__result=F8 ;;
+        $'\x1b[19^') __readkey__code__result=F8${2:++CONTROL} ;;
+        $'\x1b[19;2~') __readkey__code__result=F8${2:++SHIFT} ;;
+    
+        $'\x1b[20~') __readkey__code__result=F9 ;;
+        $'\x1b[20^') __readkey__code__result=F9${2:++CONTROL} ;;
+        $'\x1b[20;2~') __readkey__code__result=F9${2:++SHIFT} ;;
+    
+        $'\x1b[21~') __readkey__code__result=F10 ;;
+        $'\x1b[21^') __readkey__code__result=F10${2:++CONTROL} ;;
+        $'\x1b[21;2~') __readkey__code__result=F10${2:++SHIFT} ;;
+    
+        $'\x1b[23~') __readkey__code__result=F11 ;;
+        $'\x1b[23$') __readkey__code__result=F11${2:++SHIFT} ;;
+        $'\x1b[23;2~') __readkey__code__result=F11${2:++SHIFT} ;;
+        $'\x1b[23^') __readkey__code__result=F11${2:++CONTROL} ;;
+        $'\x1b[23@') __readkey__code__result=F11${2:++CONTROL+SHIFT} ;;
+    
+        $'\x1b[24~') __readkey__code__result=F12 ;;
+        $'\x1b[24$') __readkey__code__result=F12${2:++SHIFT} ;;
+        $'\x1b[24;2~') __readkey__code__result=F12${2:++SHIFT} ;;
+        $'\x1b[24^') __readkey__code__result=F12${2:++CONTROL} ;;
+        $'\x1b[24@') __readkey__code__result=F12${2:++CONTROL+SHIFT} ;;
+    
+        $'\x1b[25~') __readkey__code__result=F13 ;;
+        $'\x1b[25$') __readkey__code__result=F13${2:++SHIFT} ;;
+        $'\x1b[25;2~') __readkey__code__result=F13${2:++SHIFT} ;;
+        $'\x1b[25^') __readkey__code__result=F13${2:++CONTROL} ;;
+        $'\x1b[25@') __readkey__code__result=F13${2:++CONTROL+SHIFT} ;;
+    
+        $'\x1b[26~') __readkey__code__result=F14 ;;
+        $'\x1b[26$') __readkey__code__result=F14${2:++SHIFT} ;;
+        $'\x1b[26;2~') __readkey__code__result=F14${2:++SHIFT} ;;
+        $'\x1b[26^') __readkey__code__result=F14${2:++CONTROL} ;;
+        $'\x1b[26@') __readkey__code__result=F14${2:++CONTROL+SHIFT} ;;
+
+        $'\x1b[28~') __readkey__code__result=F15 ;;
+        $'\x1b[28$') __readkey__code__result=F15${2:++SHIFT} ;;
+        $'\x1b[28;2~') __readkey__code__result=F15${2:++SHIFT} ;;
+        $'\x1b[28^') __readkey__code__result=F15${2:++CONTROL} ;;
+        $'\x1b[28@') __readkey__code__result=F15${2:++CONTROL+SHIFT} ;;
+
+        $'\x1b[29~') __readkey__code__result=F16 ;;
+        $'\x1b[29$') __readkey__code__result=F16${2:++SHIFT} ;;
+        $'\x1b[29;2~') __readkey__code__result=F16${2:++SHIFT} ;;
+        $'\x1b[29^') __readkey__code__result=F16${2:++CONTROL} ;;
+        $'\x1b[29@') __readkey__code__result=F16${2:++CONTROL+SHIFT} ;;
+
+        $'\x1b[31~') __readkey__code__result=F17 ;;
+        $'\x1b[31$') __readkey__code__result=F17${2:++SHIFT} ;;
+        $'\x1b[31;2~') __readkey__code__result=F17${2:++SHIFT} ;;
+        $'\x1b[31^') __readkey__code__result=F17${2:++CONTROL} ;;
+        $'\x1b[31@') __readkey__code__result=F17${2:++CONTROL+SHIFT} ;;
+
+        $'\x1b[32~') __readkey__code__result=F18 ;;
+        $'\x1b[32$') __readkey__code__result=F18${2:++SHIFT} ;;
+        $'\x1b[32;2~') __readkey__code__result=F18${2:++SHIFT} ;;
+        $'\x1b[32^') __readkey__code__result=F18${2:++CONTROL} ;;
+        $'\x1b[32@') __readkey__code__result=F18${2:++CONTROL+SHIFT} ;;
+
+        $'\x1b[33~') __readkey__code__result=F19 ;;
+        $'\x1b[33$') __readkey__code__result=F19${2:++SHIFT} ;;
+        $'\x1b[33;2~') __readkey__code__result=F19${2:++SHIFT} ;;
+        $'\x1b[33^') __readkey__code__result=F19${2:++CONTROL} ;;
+        $'\x1b[33@') __readkey__code__result=F19${2:++CONTROL+SHIFT} ;;
+
+        $'\x1b[34~') __readkey__code__result=F20 ;;
+        $'\x1b[34$') __readkey__code__result=F20${2:++SHIFT} ;;
+        $'\x1b[34;2~') __readkey__code__result=F20${2:++SHIFT} ;;
+        $'\x1b[34^') __readkey__code__result=F20${2:++CONTROL} ;;
+        $'\x1b[34@') __readkey__code__result=F20${2:++CONTROL+SHIFT} ;;
+
+        # Keypad
+        $'\x1bOM') __readkey__code__result=${2:+KEYPAD_}ENTER${2:++APPLICATION} ;;
+        $'\x1bOP') __readkey__code__result=${2:+KEYPAD_}F1 ;;
+        $'\x1b[1;2P') __readkey__code__result=${2:+KEYPAD_}F1${2:++SHIFT} ;;
+        $'\x1bOQ') __readkey__code__result=${2:+KEYPAD_}F2 ;;
+        $'\x1b[1;2Q') __readkey__code__result=${2:+KEYPAD_}F2${2:++SHIFT} ;;
+        $'\x1bOR') __readkey__code__result=${2:+KEYPAD_}F3 ;;
+        $'\x1b[1;2R') __readkey__code__result=${2:+KEYPAD_}F3${2:++SHIFT} ;;
+        $'\x1bOS') __readkey__code__result=${2:+KEYPAD_}F4 ;;
+        $'\x1b[1;2S') __readkey__code__result=${2:+KEYPAD_}F4${2:++SHIFT} ;;
+        $'\x1bOj') if [[ -z "${2-}" ]]; then __readkey__code__result='*'; else __readkey__code__result=KEYPAD_MULTIPLY+APPLICATION; fi ;;
+        $'\x1bOk') if [[ -z "${2-}" ]]; then __readkey__code__result=+; else __readkey__code__result=KEYPAD_ADD+APPLICATION; fi ;;
+        $'\x1bOl') if [[ -z "${2-}" ]]; then __readkey__code__result=,; else __readkey__code__result=KEYPAD_COMMA+APPLICATION; fi ;;
+        $'\x1bOm') if [[ -z "${2-}" ]]; then __readkey__code__result=-; else __readkey__code__result=KEYPAD_SUBTRACT+APPLICATION; fi ;;
+        $'\x1bOn') if [[ -z "${2-}" ]]; then __readkey__code__result=.; else __readkey__code__result=KEYPAD_DECIMAL+APPLICATION; fi ;;
+        $'\x1bOo') if [[ -z "${2-}" ]]; then __readkey__code__result=/; else __readkey__code__result=KEYPAD_DIVIDE+APPLICATION; fi ;;
+        $'\x1bOp') __readkey__code__result=${2:+KEYPAD_}0${2:++APPLICATION} ;;
+        $'\x1bOq') __readkey__code__result=${2:+KEYPAD_}1${2:++APPLICATION} ;;
+        $'\x1bOr') __readkey__code__result=${2:+KEYPAD_}2${2:++APPLICATION} ;;
+        $'\x1bOs') __readkey__code__result=${2:+KEYPAD_}3${2:++APPLICATION} ;;
+        $'\x1bOt') __readkey__code__result=${2:+KEYPAD_}4${2:++APPLICATION} ;;
+        $'\x1bOu') __readkey__code__result=${2:+KEYPAD_}5${2:++APPLICATION} ;;
+        $'\x1bOv') __readkey__code__result=${2:+KEYPAD_}6${2:++APPLICATION} ;;
+        $'\x1bOw') __readkey__code__result=${2:+KEYPAD_}7${2:++APPLICATION} ;;
+        $'\x1bOx') __readkey__code__result=${2:+KEYPAD_}8${2:++APPLICATION} ;;
+        $'\x1bOy') __readkey__code__result=${2:+KEYPAD_}9${2:++APPLICATION} ;;
+
+        $'\x1b[7~') __readkey__code__result=${2:+KEYPAD_}HOME ;;
+        $'\x1b[7$') __readkey__code__result=${2:+KEYPAD_}HOME${2:++SHIFT} ;;
+        $'\x1b[7^') __readkey__code__result=${2:+KEYPAD_}HOME${2:++CONTROL} ;;
+        $'\x1b[7@') __readkey__code__result=${2:+KEYPAD_}HOME${2:++CONTROL+SHIFT} ;;
+
+        $'\x1b[8~') __readkey__code__result=${2:+KEYPAD_}END ;;
+        $'\x1b[8$') __readkey__code__result=${2:+KEYPAD_}END${2:++SHIFT} ;;
+        $'\x1b[8^') __readkey__code__result=${2:+KEYPAD_}END${2:++CONTROL} ;;
+        $'\x1b[8@') __readkey__code__result=${2:+KEYPAD_}END${2:++CONTROL+SHIFT} ;;
+
+        ..*) __readkey__code__result="UNKNOWN-ESCAPE-SEQUENCE:$__readkey__code__result" ;;
+
+        $'\x1b') __readkey__code__result=ESCAPE ;;
+        $'\x08') __readkey__code__result=BACKSPACE ;; # Or H+CONTROL
+        $'\x09') __readkey__code__result=TAB ;; # Or TAB+CONTROL, I+CONTROL
+        $'\x0a') __readkey__code__result=ENTER ;; # Or J+CONTROL
+        $'\x0d') __readkey__code__result=ENTER ;; # Or M+CONTROL
+        $'\x7f') __readkey__code__result=BACKSPACE${2:++SHIFT} ;; # Or BACKSPACE+CONT}}ROL
+    esac
+
+    printf -v "$1" %s "$__readkey__code__result"
+}
