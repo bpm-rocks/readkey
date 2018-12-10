@@ -4,8 +4,8 @@ BPM Library: ReadKey
 Read keys and escape sequences (represented as codes) from the keyboard.
 
 
-Installation
-============
+Installation via [BPM]
+======================
 
 Add to your `bpm.ini` file the following dependency.
 
@@ -18,9 +18,17 @@ Run `bpm install` to add the library. Finally, use it in your scripts.
     . bpm
     bpm::include readkey
 
-Alternately, you may download `libreadkey` and source it into your environment (or include it however you want in your shell scripts). The use of [BPM] is not necessary.
 
-A special note is that this library does not use the [`assign`] library. Because of this design choice, you should not use variables that start with `__readkey__*` in code that uses this library. It was done in order to boost the speed. When reading characters from the terminal, having a really fast response time is important, especially when obtaining escape sequences. This is not a preferred practice; using [`assign`] is far safer.
+Installation Another Way
+========================
+
+You may download `libreadkey` and source it into your environment (or include it however you want in your shell scripts). The use of [BPM] is not necessary. This library has no dependencies.
+
+
+Notes About The Library
+=======================
+
+This library does not use the [`assign`] library. Because of this design choice, do not mix this code and variables that start with `__readkey__*`. This choice was made specifically to boost the speed. It is beneficial to have really fast response times when reading characters from the terminal. This is not a preferred practice; using [`assign`] is far safer.
 
 
 API
